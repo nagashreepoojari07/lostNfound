@@ -4,9 +4,11 @@ from operator import attrgetter
 from flask import Blueprint, request, jsonify
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from elasticsearch import Elasticsearch
 from common.database_connection import get_db_connection
 from notifications.rabbitQ_setup import get_mq_connection, send_email_message
 from common.utils import token_required
+
 
 app = Blueprint('lost_items', __name__, url_prefix='/api/')
 
@@ -101,3 +103,33 @@ def changeStatus(item_id, status):
     conn.close()
     return jsonify({"message": "Item status updated successfully"}), 200
 
+
+# Connect to Elasticsearch running in Docker
+es = Elasticsearch(
+    "http://localhost:9200",
+    headers={"Accept": "application/vnd.elasticsearch+json; compatible-with=8"}
+)
+
+@app.route("/item_search", methods=["GET"])
+def search_items():
+    query_term = request.args.get("q")  # e.g. /search?q=dog
+    if not query_term:
+        return jsonify({"error": "Missing query parameter 'q'"}), 400
+
+    # Perform a search in lost_items_index
+    response = es.search(
+        index="lost_items_index",
+        q=query_term
+    )
+
+    # Extract hits
+    hits = [
+        {
+            "id": hit["_id"],
+            "score": hit["_score"],
+            "source": hit["_source"]
+        }
+        for hit in response["hits"]["hits"]
+    ]
+
+    return jsonify({"results": hits})
